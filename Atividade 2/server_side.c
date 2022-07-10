@@ -1,12 +1,16 @@
-// Server side C/C++ program to demonstrate Socket
-// programming
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
+#include <error.h>
+#include <errno.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #define PORT 8080
+#define BACK_LOG 10
 
 int salary_readjustment(char *message, char *response){
     int msg_size = 0;
@@ -199,53 +203,67 @@ int decode_message(char *message, char *response){
 }
 
 int main(int argc, char const* argv[]){
-    int server_fd, new_socket, valread;
-    struct sockaddr_in address;
-    int opt = 1;
-    int addrlen = sizeof(address);
-    char buffer[1024] = { 0 };
+    int listenfd,connectfd;
+    struct sockaddr_in server;
+    struct sockaddr_in client;
+    pid_t childpid;
+    socklen_t addrlen;
+    char buff[4096];
     char response[1024] = { 0 };
     int response_size = 0;
-    char* hello = "Hello from server";
-  
-    // Creating socket file descriptor
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-  
-    // Forcefully attaching socket to the port 8080
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("setsockopt");
-        exit(EXIT_FAILURE);
-    }
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
-  
-    // Forcefully attaching socket to the port 8080
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
-    }
-    if (listen(server_fd, 3) < 0) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
-    if ((new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen)) < 0) {
-        perror("accept");
-        exit(EXIT_FAILURE);
-    }
-    valread = read(new_socket, buffer, 1024);
-    
-    response_size = decode_message(buffer, response);
 
-    send(new_socket, response, response_size, 0);
-    
-    
-    // closing the connected socket
-    close(new_socket);
-    // closing the listening socket
-    shutdown(server_fd, SHUT_RDWR);
+    listenfd = socket(AF_INET,SOCK_STREAM,0);
+    if(listenfd == -1){
+        perror("socker created failed");
+        exit(0);
+    }
+
+    int option;
+    option = SO_REUSEADDR;
+    setsockopt(listenfd,SOL_SOCKET,option,&option,sizeof(option));
+    bzero(&server,sizeof(server));
+    server.sin_family = AF_INET;
+    server.sin_port = htons(PORT);
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if(bind(listenfd,(struct sockaddr *)&server,sizeof(server)) == -1){
+        perror("Bind error!");
+        exit(1);
+    }
+    if(listen(listenfd,BACK_LOG) == -1){
+        perror("listend error");
+        exit(1);
+    }
+
+    printf("waiting for client's request.....\n");
+    while(1){
+        int n;
+        addrlen = sizeof(client);
+        connectfd = accept(listenfd,(struct sockaddr*)&client,&addrlen);
+        if(connectfd == -1){
+            perror("accept error");
+            exit(0);
+        }else{
+            printf("client connected\n");
+        }
+        if((childpid = fork()) == 0){	
+            close(listenfd);
+            printf("client from %s\n",inet_ntoa(client.sin_addr));
+            
+            printf("ready to read\n");
+            while((n = read(connectfd,buff,4096)) > 0){
+                buff[n] = '\0';
+                printf("recv msg from client: %s\n",buff);
+                response_size = decode_message(buff, response);
+                
+                send(connectfd, response, response_size, 0);
+            }
+            printf("end read\n");
+            exit(0);
+        }else if(childpid < 0)
+            printf("fork error: %s\n",strerror(errno));
+
+        close(connectfd);
+	}
     return 0;
 }
